@@ -24,21 +24,39 @@ pipeline {
             }
         }
 
+        // stage('Checkout') {
+        //     steps {
+        //         checkout([
+        //             $class: 'GitSCM',
+        //             branches: [[name: "${env.BRANCH_NAME}"]],
+        //             userRemoteConfigs: [[
+        //                 url: 'https://github.com/JesusRamirezGamarra/frontend-k8-pipeline.git',
+        //                 credentialsId: 'dockerhub-credentials'
+        //             ]],
+        //             extensions: [
+        //                 [$class: 'CloneOption', depth: 1, noTags: true]
+        //             ]
+        //         ])
+        //     }
+        // }
         stage('Checkout') {
+            timeout(time: 5, unit: 'MINUTES') // 🔥 Máximo 5 minutos
             steps {
                 checkout([
                     $class: 'GitSCM',
-                    branches: [[name: "${env.BRANCH_NAME}"]],
+                    branches: [[name: "develop"]], // 🔥 Solo la rama develop
                     userRemoteConfigs: [[
                         url: 'https://github.com/JesusRamirezGamarra/frontend-k8-pipeline.git',
                         credentialsId: 'dockerhub-credentials'
                     ]],
                     extensions: [
-                        [$class: 'CloneOption', depth: 1, noTags: true]
+                        [$class: 'CloneOption', depth: 1, noTags: true],
+                        [$class: 'WipeWorkspace'] // 🔥 Limpia el workspace antes del checkout
                     ]
                 ])
             }
         }
+
 
 
         stage ('Instalar dependencias...') {
