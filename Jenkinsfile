@@ -40,22 +40,33 @@ pipeline {
             }
         }
 
-        stage('Instalar dependencias') {
+
+        stage ('Instalar dependencias...') {
             agent {
-                docker { image 'node:18-alpine' }
+                docker { image 'node:18-alpine'}
             }
             steps {
-                echo "📦 Verificando dependencias en node_modules..."
-                sh '''
-                if [ ! -d "node_modules/.bin" ]; then
-                    echo "⚡ No hay dependencias instaladas. Ejecutando npm ci..."
-                    npm ci
-                else
-                    echo "✅ Dependencias ya instaladas, omitiendo instalación."
-                fi
-                '''
+                echo "Remover dependencias antiguas o referencias por el json.lock"
+                sh 'rm -rf node_modules package-lock.json'
+                sh 'npm install'
             }
         }
+        // stage('Instalar dependencias') {
+        //     agent {
+        //         docker { image 'node:18-alpine' }
+        //     }
+        //     steps {
+        //         echo "📦 Verificando dependencias en node_modules..."
+        //         sh '''
+        //         if [ ! -d "node_modules/.bin" ]; then
+        //             echo "⚡ No hay dependencias instaladas. Ejecutando npm ci..."
+        //             npm ci
+        //         else
+        //             echo "✅ Dependencias ya instaladas, omitiendo instalación."
+        //         fi
+        //         '''
+        //     }
+        // }
 
         stage('Construir proyecto') {
             agent {
@@ -67,48 +78,87 @@ pipeline {
             }
         }
 
-        stage('Construir y subir imagen a DockerHub') {
+        // stage('Construir y subir imagen a DockerHub') {
+        //     agent {
+        //         docker { image 'docker:latest' }
+        //     }
+        //     steps {
+        //         script {
+        //             echo "🔐 Autenticando en DockerHub..."
+        //             withDockerRegistry([credentialsId: 'dockerhub-credentials']) {
+        //                 sh '''
+        //                 docker build --cache-from $DOCKER_REPO:latest -t $DOCKER_REPO:latest .
+        //                 docker push $DOCKER_REPO:latest
+        //                 '''
+        //             }
+        //         }
+        //     }
+        // }
+
+        stage('Construir y pushear imagen a dockerhub') {
             agent {
-                docker { image 'docker:latest' }
-            }
-            steps {
-                script {
-                    echo "🔐 Autenticando en DockerHub..."
-                    withDockerRegistry([credentialsId: 'dockerhub-credentials']) {
-                        sh '''
-                        docker build --cache-from $DOCKER_REPO:latest -t $DOCKER_REPO:latest .
-                        docker push $DOCKER_REPO:latest
-                        '''
-                    }
+                docker {
+                    image 'docker:latest'
                 }
             }
-        }
+            steps {
+                sh '''
+                echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
+                docker build -t $DOCKER_REPO:latest .
+                docker push $DOCKER_REPO:latest
+                '''
+            }
+        }        
 
-        stage('Desplegar en Minikube') {
+        // stage('Desplegar en Minikube') {
+        //     agent {
+        //         docker { image 'bitnami/kubectl:latest' }
+        //     }
+        //     steps {
+        //         withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
+        //             script {
+        //                 echo "🔍 Verificando si el deployment existe..."
+        //                 def deploymentExists = sh(script: "kubectl get deployment $KUBE_DEPLOYMENT_NAME --ignore-not-found", returnStdout: true).trim()
+
+        //                 if (deploymentExists == '') {
+        //                     echo "✅ Creando Deployment..."
+        //                     sh "kubectl apply -f $DEPLOYMENT_FILE_NAME"
+        //                 } else {
+        //                     echo "🔄 Deployment ya existe, actualizando imagen..."
+        //                     sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-web-front-jesusramirez=$DOCKER_REPO:latest"
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+        stage('Despliegue inicial en minikube...') {
             agent {
-                docker { image 'bitnami/kubectl:latest' }
+                docker { 
+                    image 'bitnami/kubectl:latest'
+                    args '--entrypoint=""'
+                }
             }
             steps {
                 withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
                     script {
-                        echo "🔍 Verificando si el deployment existe..."
                         def deploymentExists = sh(script: "kubectl get deployment $KUBE_DEPLOYMENT_NAME --ignore-not-found", returnStdout: true).trim()
-
-                        if (deploymentExists == '') {
-                            echo "✅ Creando Deployment..."
-                            sh "kubectl apply -f $DEPLOYMENT_FILE_NAME"
+                        if (deploymentExists) {
+                            echo "El deployment ya existe, proceder a la actualizacion de la imagen..."
                         } else {
-                            echo "🔄 Deployment ya existe, actualizando imagen..."
-                            sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-web-front-jesusramirez=$DOCKER_REPO:latest"
+                            echo "Deployment no existe proceder a aplicarlo..."
+                            sh "kubectl apply -f $DEPLOYMENT_FILE_NAME"
                         }
                     }
                 }
             }
-        }
+        }        
 
         stage('Obtener IP del LoadBalancer') {
             agent {
-                docker { image 'bitnami/kubectl:latest' }
+                docker { 
+                    image 'bitnami/kubectl:latest'
+                    args '--entrypoint=""'
+                }
             }
             steps {
                 withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
