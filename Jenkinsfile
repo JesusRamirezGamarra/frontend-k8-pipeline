@@ -1,11 +1,12 @@
 pipeline {
     agent any
+
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
         DOCKER_REPO = 'jesusramirezgamarra/frontend-react-k8'
-        KUBE_DEPLOYMENT_NAME='mi-web-front-jesusramirez'
-        DEPLOYMENT_FILE_NAME='deployment-frontend.yaml'
-        SERVICE_NAME='mi-web-service-jesusramirez'  // 🔹 Reemplaza con el nombre real de tu servicio LoadBalancer
+        KUBE_DEPLOYMENT_NAME = 'mi-web-front-jesusramirez'
+        DEPLOYMENT_FILE_NAME = 'deployment-frontend.yaml'
+        SERVICE_NAME = 'mi-web-service-jesusramirez'
     }
 
     options {
@@ -17,7 +18,7 @@ pipeline {
             steps {
                 script {
                     if (env.BRANCH_NAME != 'develop') {
-                        error("Este pipeline solo se ejecuta en la rama 'develop'. Rama actual: ${env.BRANCH_NAME}")
+                        error("🚫 Este pipeline solo se ejecuta en la rama 'develop'. Rama actual: ${env.BRANCH_NAME}")
                     }
                 }
             }
@@ -39,93 +40,83 @@ pipeline {
             }
         }
 
-        stage ('Instalar dependencias...') {
+        stage('Instalar dependencias') {
             agent {
                 docker { image 'node:18-alpine' }
             }
             steps {
-                echo "Remover dependencias antiguas o referencias por el json.lock"
-                sh 'rm -rf node_modules package-lock.json'
-                sh 'npm install'
-            }
-        }
-
-        stage ('Construir proyecto con archivos estáticos...') {
-            agent {
-                docker { image 'node:18-alpine' }
-            }
-            steps {
-                sh 'npm run build'
-            }
-        }
-
-        stage('Construir y pushear imagen a DockerHub') {
-            agent {
-                docker {
-                    image 'docker:latest'
-                }
-            }
-            steps {
+                echo "📦 Verificando dependencias en node_modules..."
                 sh '''
-                echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
-                docker build -t $DOCKER_REPO:latest .
-                docker push $DOCKER_REPO:latest
+                if [ ! -d "node_modules/.bin" ]; then
+                    echo "⚡ No hay dependencias instaladas. Ejecutando npm ci..."
+                    npm ci
+                else
+                    echo "✅ Dependencias ya instaladas, omitiendo instalación."
+                fi
                 '''
             }
         }
 
-        stage('Despliegue inicial en Minikube...') {
+        stage('Construir proyecto') {
             agent {
-                docker { 
-                    image 'bitnami/kubectl:latest'
-                    args '--entrypoint=""'
+                docker { image 'node:18-alpine' }
+            }
+            steps {
+                echo "⚙️ Compilando frontend..."
+                sh 'npm run build'
+            }
+        }
+
+        stage('Construir y subir imagen a DockerHub') {
+            agent {
+                docker { image 'docker:latest' }
+            }
+            steps {
+                script {
+                    echo "🔐 Autenticando en DockerHub..."
+                    withDockerRegistry([credentialsId: 'dockerhub-credentials']) {
+                        sh '''
+                        docker build --cache-from $DOCKER_REPO:latest -t $DOCKER_REPO:latest .
+                        docker push $DOCKER_REPO:latest
+                        '''
+                    }
                 }
+            }
+        }
+
+        stage('Desplegar en Minikube') {
+            agent {
+                docker { image 'bitnami/kubectl:latest' }
             }
             steps {
                 withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
                     script {
+                        echo "🔍 Verificando si el deployment existe..."
                         def deploymentExists = sh(script: "kubectl get deployment $KUBE_DEPLOYMENT_NAME --ignore-not-found", returnStdout: true).trim()
-                        if (deploymentExists) {
-                            echo "El deployment ya existe, proceder a la actualización de la imagen..."
-                        } else {
-                            echo "Deployment no existe, proceder a aplicarlo..."
+
+                        if (deploymentExists == '') {
+                            echo "✅ Creando Deployment..."
                             sh "kubectl apply -f $DEPLOYMENT_FILE_NAME"
+                        } else {
+                            echo "🔄 Deployment ya existe, actualizando imagen..."
+                            sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-web-front-jesusramirez=$DOCKER_REPO:latest"
                         }
                     }
                 }
             }
         }
 
-        stage('Actualización de imagen en Minikube...') {
-            agent {
-                docker { 
-                    image 'bitnami/kubectl:latest'
-                    args '--entrypoint=""'
-                }
-            }
-            steps {
-                withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
-                    sh "kubectl set image deployment/$KUBE_DEPLOYMENT_NAME mi-web-front-jesusramirez=$DOCKER_REPO:latest"
-                }
-            }
-        }
-
         stage('Obtener IP del LoadBalancer') {
             agent {
-                docker { 
-                    image 'bitnami/kubectl:latest'
-                    args '--entrypoint=""'
-                }
+                docker { image 'bitnami/kubectl:latest' }
             }
             steps {
                 withKubeConfig([credentialsId: 'minikube-kubeconfig']) {
                     script {
+                        echo "🌍 Obteniendo IP del LoadBalancer..."
                         def lbIp = sh(script: "kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'", returnStdout: true).trim()
-                        if (!lbIp) {
-                            lbIp = "No asignada aún"
-                        }
-                        env.LB_IP = lbIp
-                        echo "IP del LoadBalancer: ${env.LB_IP}"
+                        env.LB_IP = lbIp ?: "No asignada aún"
+                        echo "🌐 IP del LoadBalancer: ${env.LB_IP}"
                     }
                 }
             }
